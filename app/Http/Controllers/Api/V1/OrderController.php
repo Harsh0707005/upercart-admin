@@ -280,6 +280,7 @@ class OrderController extends Controller
         $order_status ='pending';
         $order->user_id = $request->user ? $request->user->id : $request['guest_id'];
         $order->order_amount = $request['order_amount'];
+        $order->additional_charge = $request['additional_charge'];
         $order->payment_status = ($request->partial_payment ? 'partially_paid' : ($request['payment_method'] == 'wallet' ? 'paid' : 'unpaid'));
         $order->order_status = $order_status;
         $order->coupon_code = $request['coupon_code'];
@@ -342,13 +343,17 @@ class OrderController extends Controller
         } else {
             $order->dm_tips = 0;
         }
-        $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
-        $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
-        if ($additional_charge_status == 1) {
-            $order->additional_charge = $additional_charge ?? 0;
-        } else {
-            $order->additional_charge = 0;
-        }
+
+        
+        // $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
+        // $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
+
+        // $order->additional_charge = (float)ceil($additional_charge * $order->order_amount / 100) ?? 0;
+        // if ($additional_charge_status == 1) {
+        //     $order->additional_charge = $additional_charge ?? 0;
+        // } else {
+        //     $order->additional_charge = 0;
+        // }
         $extra_packaging_data = BusinessSetting::where('key', 'extra_packaging_data')->first()?->value ?? '';
         $extra_packaging_data =json_decode($extra_packaging_data , true);
         $order->extra_packaging_amount =  (!empty($extra_packaging_data) && $request?->extra_packaging_amount > 0 && $store && ($extra_packaging_data[$store->module->module_type]=='1') && ($store?->storeConfig?->extra_packaging_status == '1'))?$store?->storeConfig?->extra_packaging_amount:0;
@@ -1214,6 +1219,7 @@ class OrderController extends Controller
 
         $order->user_id = $request->user ? $request->user->id : $request['guest_id'];
         $order->order_amount = $request['order_amount'];
+        $order->additional_charge = $request['additional_charge'];
         $order->payment_status = ($request->partial_payment ? 'partially_paid' : ($request['payment_method'] == 'wallet' ? 'paid' : 'unpaid'));
         $order->order_status = $order_status;
         $order->coupon_code = $request['coupon_code'];
@@ -1279,13 +1285,16 @@ class OrderController extends Controller
         }
 
         //Added service charge
-        $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
-        $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
-        if ($additional_charge_status == 1) {
-            $order->additional_charge = $additional_charge ?? 0;
-        } else {
-            $order->additional_charge = 0;
-        }
+        
+        // $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
+        // $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
+
+        // $order->additional_charge = (float)ceil($additional_charge * $order->order_amount / 100) ?? 0;
+        // if ($additional_charge_status == 1) {
+        //     $order->additional_charge = $additional_charge ?? 0;
+        // } else {
+        //     $order->additional_charge = 0;
+        // }
 
         // extra packaging charge
         $extra_packaging_data = BusinessSetting::where('key', 'extra_packaging_data')->first()?->value ?? '';
@@ -2081,13 +2090,16 @@ class OrderController extends Controller
         $order->updated_at = now();
 
         //Added service charge
-        $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
-        $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
-        if ($additional_charge_status == 1) {
-            $order->additional_charge = $additional_charge ?? 0;
-        } else {
-            $order->additional_charge = 0;
-        }
+        
+        // $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
+        // $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
+
+        // $order->additional_charge = (float)ceil($additional_charge * $order->order_amount / 100) ?? 0;
+        // if ($additional_charge_status == 1) {
+        //     $order->additional_charge = $additional_charge ?? 0;
+        // } else {
+        //     $order->additional_charge = 0;
+        // }
 
         //Added DM TIPS
         $dm_tips_manage_status = BusinessSetting::where('key', 'dm_tips_status')->first()->value;
