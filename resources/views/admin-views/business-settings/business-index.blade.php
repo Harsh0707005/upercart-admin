@@ -1181,7 +1181,9 @@
                                                 <label class="form-label d-flex justify-content-between text-capitalize mb-1"
                                                     for="additional_charge">
                                                     <span class="line--limit-1">{{ translate('messages.charge_amount') }}
-                                                        ({{ \App\CentralLogics\Helpers::currency_symbol() }}) <small
+                                                        (%)
+                                                        <!-- ({{ \App\CentralLogics\Helpers::currency_symbol() }})  -->
+                                                        <small
                                                         class="text-danger"><span class="form-label-secondary"
                                                             data-toggle="tooltip" data-placement="right"
                                                             data-original-title="{{ translate('messages.Set_the_value_(amount)_customers_need_to_pay_as_additional_charge.') }}"><img

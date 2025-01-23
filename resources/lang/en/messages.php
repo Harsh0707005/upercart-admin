@@ -1336,7 +1336,7 @@
   'Set_a_name_for_the_additional_charge,_e.g._“Processing_Fee”.' => 'Set a name for the additional charge  e.g. “Processing Fee”.',
   'Ex:_Processing_Fee' => 'Ex: Processing Fee',
   'charge_amount' => 'Charge amount',
-  'Set_the_value_(amount)_customers_need_to_pay_as_additional_charge.' => 'Set the value (amount) customers need to pay as additional charge.',
+  'Set_the_value_(amount)_customers_need_to_pay_as_additional_charge.' => 'Set the percentage of total price customers need to pay as additional charge.',
   'If_enabled,_customers_can_make_partial_payments._For_example,_a_customer_can_pay_$20_initially_out_of_their_$50_payment_&_use_other_payment_methods_for_the_rest._Partial_payments_must_be_made_through_their_wallets.' => 'If enabled  customers can make partial payments. For example  a customer can pay $20 initially out of their $50 payment & use other payment methods for the rest. Partial payments must be made through their wallets.',
   'partial_payment_?' => 'Partial payment ?',
   'If_you_enable_this,_customers_can_choose_partial_payment_during_checkout.' => 'If you enable this  customers can choose partial payment during checkout.',
