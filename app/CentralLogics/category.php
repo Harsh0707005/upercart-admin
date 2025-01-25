@@ -21,34 +21,33 @@ class CategoryLogic
         return Category::where(['parent_id' => $parent_id])->get();
     }
 
-    public static function products($category_id, $zone_id, int $limit,int $offset, $type)
+    public static function products($category_id, $zone_id, int $limit, int $offset, $type)
     {
-
         $category_sub_category_item_default_status = BusinessSetting::where('key', 'category_sub_category_item_default_status')->first()?->value ?? 1;
-        $category_sub_category_item_sort_by_general = PriorityList::where('name', 'category_sub_category_item_sort_by_general')->where('type','general')->first()?->value ?? '';
-        $category_sub_category_item_sort_by_unavailable = PriorityList::where('name', 'category_sub_category_item_sort_by_unavailable')->where('type','unavailable')->first()?->value ?? '';
-        $category_sub_category_item_sort_by_temp_closed = PriorityList::where('name', 'category_sub_category_item_sort_by_temp_closed')->where('type','temp_closed')->first()?->value ?? '';
-
+        $category_sub_category_item_sort_by_general = PriorityList::where('name', 'category_sub_category_item_sort_by_general')->where('type', 'general')->first()?->value ?? '';
+        $category_sub_category_item_sort_by_unavailable = PriorityList::where('name', 'category_sub_category_item_sort_by_unavailable')->where('type', 'unavailable')->first()?->value ?? '';
+        $category_sub_category_item_sort_by_temp_closed = PriorityList::where('name', 'category_sub_category_item_sort_by_temp_closed')->where('type', 'temp_closed')->first()?->value ?? '';
+    
         $query = Item::
-        whereHas('module.zones', function($query)use($zone_id){
-            $query->whereIn('zones.id', json_decode($zone_id, true));
-        })
-            ->whereHas('store', function($query)use($zone_id){
-                $query->whereIn('zone_id', json_decode($zone_id, true))->whereHas('zone.modules',function($query){
-                    $query->when(config('module.current_module_data'), function($query){
+            whereHas('module.zones', function($query) use($zone_id) {
+                $query->whereIn('zones.id', json_decode($zone_id, true));
+            })
+            ->whereHas('store', function($query) use($zone_id) {
+                $query->whereIn('zone_id', json_decode($zone_id, true))->whereHas('zone.modules', function($query) {
+                    $query->when(config('module.current_module_data'), function($query) {
                         $query->where('modules.id', config('module.current_module_data')['id']);
                     });
                 });
             })
-            ->whereHas('category',function($q)use($category_id){
-                return $q->when(is_numeric($category_id),function ($qurey) use($category_id){
+            ->whereHas('category', function($q) use($category_id) {
+                return $q->when(is_numeric($category_id), function ($qurey) use($category_id) {
                     return $qurey->whereId($category_id)->orWhere('parent_id', $category_id);
                 })
-                    ->when(!is_numeric($category_id),function ($qurey) use($category_id){
-                        $qurey->where('slug', $category_id);
-                    });
+                ->when(!is_numeric($category_id), function ($qurey) use($category_id) {
+                    $qurey->where('slug', $category_id);
+                });
             })
-
+            ->where('price', '<', 50)
             ->select(['items.*'])
             ->selectSub(function ($subQuery) {
                 $subQuery->selectRaw('active as temp_available')
@@ -56,42 +55,39 @@ class CategoryLogic
                     ->whereColumn('stores.id', 'items.store_id');
             }, 'temp_available')
             ->active()->type($type);
-
-            if ($category_sub_category_item_default_status == '1'){
-                $query = $query->latest();
-            } else {
-                if(config('module.current_module_data')['module_type']  !== 'food'){
-                    if($category_sub_category_item_sort_by_unavailable == 'remove'){
-                        $query = $query->where('stock', '>', 0);
-                    }elseif($category_sub_category_item_sort_by_unavailable == 'last'){
-                        $query = $query->orderByRaw('CASE WHEN stock = 0 THEN 1 ELSE 0 END');
-                    }
+    
+        if ($category_sub_category_item_default_status == '1') {
+            $query = $query->latest();
+        } else {
+            if (config('module.current_module_data')['module_type'] !== 'food') {
+                if ($category_sub_category_item_sort_by_unavailable == 'remove') {
+                    $query = $query->where('stock', '>', 0);
+                } elseif ($category_sub_category_item_sort_by_unavailable == 'last') {
+                    $query = $query->orderByRaw('CASE WHEN stock = 0 THEN 1 ELSE 0 END');
                 }
-
-                if($category_sub_category_item_sort_by_temp_closed == 'remove'){
-                    $query = $query->having('temp_available', '>', 0);
-                }elseif($category_sub_category_item_sort_by_temp_closed == 'last'){
-                    $query = $query->orderByDesc('temp_available');
-                }
-
-                if ($category_sub_category_item_sort_by_general == 'rating') {
-                    $query = $query->orderByDesc('avg_rating');
-                } elseif ($category_sub_category_item_sort_by_general == 'review_count') {
-                    $query = $query->withCount('reviews')->orderByDesc('reviews_count');
-
-                } elseif ($category_sub_category_item_sort_by_general == 'a_to_z') {
-                    $query = $query->orderBy('name');
-                } elseif ($category_sub_category_item_sort_by_general == 'z_to_a') {
-                    $query = $query->orderByDesc('name');
-                } elseif ($category_sub_category_item_sort_by_general == 'order_count') {
-                    $query = $query->orderByDesc('order_count');
-                }
-
             }
-
-            $paginator = $query->paginate($limit, ['*'], 'page', $offset);
-
-
+    
+            if ($category_sub_category_item_sort_by_temp_closed == 'remove') {
+                $query = $query->having('temp_available', '>', 0);
+            } elseif ($category_sub_category_item_sort_by_temp_closed == 'last') {
+                $query = $query->orderByDesc('temp_available');
+            }
+    
+            if ($category_sub_category_item_sort_by_general == 'rating') {
+                $query = $query->orderByDesc('avg_rating');
+            } elseif ($category_sub_category_item_sort_by_general == 'review_count') {
+                $query = $query->withCount('reviews')->orderByDesc('reviews_count');
+            } elseif ($category_sub_category_item_sort_by_general == 'a_to_z') {
+                $query = $query->orderBy('name');
+            } elseif ($category_sub_category_item_sort_by_general == 'z_to_a') {
+                $query = $query->orderByDesc('name');
+            } elseif ($category_sub_category_item_sort_by_general == 'order_count') {
+                $query = $query->orderByDesc('order_count');
+            }
+        }
+    
+        $paginator = $query->paginate($limit, ['*'], 'page', $offset);
+    
         return [
             'total_size' => $paginator->total(),
             'limit' => $limit,
@@ -99,6 +95,7 @@ class CategoryLogic
             'products' => $paginator->items()
         ];
     }
+    
 
     public static function category_products($category_ids, $zone_id, int $limit,int $offset, $type, $filter=null, $min=false, $max=false, $rating_count=null, $brand_ids = null)
     {

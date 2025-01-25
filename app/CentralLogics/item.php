@@ -448,7 +448,7 @@ class ProductLogic
         $popular_item_sort_by_unavailable = $popular_item_sort_by_unavailable ? $popular_item_sort_by_unavailable->value : '';
         $popular_item_sort_by_temp_closed = \App\Models\PriorityList::where('name', 'popular_item_sort_by_temp_closed')->where('type','temp_closed')->first();
         $popular_item_sort_by_temp_closed = $popular_item_sort_by_temp_closed ? $popular_item_sort_by_temp_closed->value : '';
-
+    
         if($limit != null && $offset != null)
         {
             $query = Item::
@@ -462,6 +462,7 @@ class ProductLogic
                     });
                 })->whereIn('zone_id', json_decode($zone_id, true));
             })
+            ->where('price', '<', 50)
             ->select(['items.*'])
             ->selectSub(function ($subQuery) {
                 $subQuery->selectRaw('active as temp_available')
@@ -469,11 +470,10 @@ class ProductLogic
                     ->whereColumn('stores.id', 'items.store_id');
             }, 'temp_available')
             ->active()->type($type);
-
+    
             if ($popular_item_default_status == '1'){
                 $query = $query->popular();
             } else {
-
                 if(config('module.current_module_data')['module_type']  !== 'food'){
                     if($popular_item_sort_by_unavailable == 'remove'){
                         $query = $query->where('stock', '>', 0);
@@ -481,13 +481,13 @@ class ProductLogic
                         $query = $query->orderByRaw('CASE WHEN stock = 0 THEN 1 ELSE 0 END');
                     }
                 }
-
+    
                 if($popular_item_sort_by_temp_closed == 'remove'){
                     $query = $query->having('temp_available', '>', 0);
                 }elseif($popular_item_sort_by_temp_closed == 'last'){
                     $query = $query->orderByDesc('temp_available');
                 }
-
+    
                 if ($popular_item_sort_by_general == 'rating') {
                     $query = $query->orderByDesc('avg_rating');
                 } elseif ($popular_item_sort_by_general == 'review_count') {
@@ -504,9 +504,9 @@ class ProductLogic
                     $query = $query->oldest();
                 }
             }
-
+    
             $paginator = $query->paginate($limit, ['*'], 'page', $offset);
-
+    
             return [
                 'total_size' => $paginator->total(),
                 'limit' => $limit,
@@ -514,6 +514,8 @@ class ProductLogic
                 'products' => $paginator->items()
             ];
         }
+    
+        // Default query if no limit or offset provided
         $query = Item::active()
         ->whereHas('module.zones', function($query)use($zone_id){
             $query->whereIn('zones.id', json_decode($zone_id, true));
@@ -525,14 +527,15 @@ class ProductLogic
                 });
             })->whereIn('zone_id', json_decode($zone_id, true));
         })
-            ->select(['items.*'])
-            ->selectSub(function ($subQuery) {
-                $subQuery->selectRaw('active as temp_available')
-                    ->from('stores')
-                    ->whereColumn('stores.id', 'items.store_id');
-            }, 'temp_available')
-            ->active()->type($type);
-
+        ->where('price', '<', 50) // Add condition for price less than 50
+        ->select(['items.*'])
+        ->selectSub(function ($subQuery) {
+            $subQuery->selectRaw('active as temp_available')
+                ->from('stores')
+                ->whereColumn('stores.id', 'items.store_id');
+        }, 'temp_available')
+        ->active()->type($type);
+    
         if ($popular_item_default_status == '1'){
             $query = $query->popular();
         } else {
@@ -543,13 +546,13 @@ class ProductLogic
                     $query = $query->orderByRaw('CASE WHEN stock = 0 THEN 1 ELSE 0 END');
                 }
             }
-
+    
             if($popular_item_sort_by_temp_closed == 'remove'){
                 $query = $query->having('temp_available', '>', 0);
             }elseif($popular_item_sort_by_temp_closed == 'last'){
                 $query = $query->orderByDesc('temp_available');
             }
-
+    
             if ($popular_item_sort_by_general == 'rating') {
                 $query = $query->orderByDesc('avg_rating');
             } elseif ($popular_item_sort_by_general == 'review_count') {
@@ -566,17 +569,18 @@ class ProductLogic
                 $query = $query->oldest();
             }
         }
-
+    
         $paginator = $query->limit(50)->get();
-
+    
         return [
             'total_size' => $paginator->count(),
             'limit' => $limit,
             'offset' => $offset,
             'products' => $paginator
         ];
-
+    
     }
+    
 
     public static function most_reviewed_products($zone_id, $limit = null, $offset = null, $type = 'all')
     {
