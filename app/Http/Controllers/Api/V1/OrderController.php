@@ -714,6 +714,9 @@ class OrderController extends Controller
 
         try {
             DB::beginTransaction();
+            $order->payment_status='paid';
+            $order->payment_method='stripe';
+            $order->order_status='confirmed';
             $order->save();
             if ($request->order_type !== 'parcel') {
                 foreach ($order_details as $key => $item) {
