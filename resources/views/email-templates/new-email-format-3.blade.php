@@ -362,11 +362,11 @@ width: 24px;
                                                                         <td class="p-1 px-3">{{ translate('messages.item_price') }}</td>
                                                                         <td class="text-right p-1 px-3">{{ \App\CentralLogics\Helpers::format_currency($sub_total) }}</td>
                                                                     </tr>
-                                                                    <tr>
+                                                                    <!-- <tr>
                                                                         <td style="width: 40%"></td>
                                                                         <td class="p-1 px-3">{{ translate('messages.addon_cost') }}</td>
                                                                         <td class="text-right p-1 px-3">{{ \App\CentralLogics\Helpers::format_currency($total_addon_price) }}</td>
-                                                                    </tr>
+                                                                    </tr> -->
                                                                     <tr>
                                                                         <td style="width: 40%"></td>
                                                                         <td class="p-1 px-3">{{ translate('messages.subtotal') }}
@@ -402,7 +402,7 @@ width: 24px;
                                                                     </tr>
                                                                     @endif
 
-                                                                    @if ($order->tax_status == 'excluded' || $order->tax_status == null  )
+                                                                    <!-- @if ($order->tax_status == 'excluded' || $order->tax_status == null  )
                                                                     <tr>
                                                                         <td style="width: 40%"></td>
                                                                         <td class="p-1 px-3">{{ translate('messages.tax') }}</td>
@@ -414,7 +414,7 @@ width: 24px;
                                                                         <td class="p-1 px-3">{{ translate('messages.tax') }}</td>
                                                                         <td class="text-right p-1 px-3">{{ \App\CentralLogics\Helpers::format_currency($total_tax) }}</td>
                                                                     </tr>
-                                                                    @endif
+                                                                    @endif -->
                                                                     <tr>
                                                                         <td style="width: 40%"></td>
                                                                         <td class="p-1 px-3">{{ translate('messages.delivery_charge') }}</td>
