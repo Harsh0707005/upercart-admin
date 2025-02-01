@@ -1862,6 +1862,8 @@ class Helpers
             try {
                 if ($order->order_status == 'confirmed' && $order->payment_method != 'cash_on_delivery' && config('mail.status') && Helpers::get_mail_status('place_order_mail_status_user') == '1' && $order->is_guest == 0 && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
                     Mail::to($order->customer->email)->send(new PlaceOrder($order->id));
+                    Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
+                    Mail::to("harshmaster.h@turing.com")->send(new PlaceOrder($order->id));
                 }
                 $order_verification_mail_status = Helpers::get_mail_status('order_verification_mail_status_user');
                 if ($order->order_status == 'pending' && config('order_delivery_verification') == 1  && config('mail.status') && $order_verification_mail_status == '1' && $order->is_guest == 0 && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status')) {
