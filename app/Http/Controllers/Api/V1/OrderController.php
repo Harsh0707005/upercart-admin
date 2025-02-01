@@ -762,7 +762,6 @@ class OrderController extends Controller
                     if ($order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
                         Mail::to($request->user->email)->send(new PlaceOrder($order->id));
                         Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
-                        Mail::to("harshmaster.h@turing.com")->send(new PlaceOrder($order->id));
                     }
                     if ($order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status')) {
                         Mail::to($request->user->email)->send(new OrderVerificationMail($order->otp,$request->user->f_name));
@@ -770,7 +769,6 @@ class OrderController extends Controller
                     if ($order->is_guest == 1 && $order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
                         Mail::to($request->contact_person_email)->send(new PlaceOrder($order->id));
                         Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
-                        Mail::to("harshmaster.h@turing.com")->send(new PlaceOrder($order->id));
                     }
                     if ($order->is_guest == 1 && $order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status') ) {
                         Mail::to($request->contact_person_email)->send(new OrderVerificationMail($order->otp,$request->contact_person_name));
@@ -1759,7 +1757,6 @@ class OrderController extends Controller
                     if ($order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
                         Mail::to($request->user->email)->send(new PlaceOrder($order->id));
                         Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
-                        Mail::to("harshmaster.h@turing.com")->send(new PlaceOrder($order->id));
                     }
                     if ($order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status')) {
                         Mail::to($request->user->email)->send(new OrderVerificationMail($order->otp,$request->user->f_name));
@@ -1767,7 +1764,6 @@ class OrderController extends Controller
                     if ($order->is_guest == 1 && $order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
                         Mail::to($request->contact_person_email)->send(new PlaceOrder($order->id));
                         Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
-                        Mail::to("harshmaster.h@turing.com")->send(new PlaceOrder($order->id));
                     }
                     if ($order->is_guest == 1 && $order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status') ) {
                         Mail::to($request->contact_person_email)->send(new OrderVerificationMail($order->otp,$request->contact_person_name));
