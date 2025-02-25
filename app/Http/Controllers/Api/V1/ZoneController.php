@@ -12,7 +12,7 @@ class ZoneController extends Controller
 {
     public function get_zones()
     {
-        $zones= Zone::where('status',1)->get();
+        $zones = Zone::with('modules')->where('status', 1)->get();
         foreach($zones as $zone){
             $area = json_decode($zone->coordinates[0]->toJson(),true);
             $zone['formated_coordinates']=Helpers::format_coordiantes($area['coordinates']);
