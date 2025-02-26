@@ -783,9 +783,7 @@ class OrderController extends Controller
                 'total_ammount' => $order->order_amount,
                 'status' => $order->order_status,
                 'created_at' => $order->created_at,
-                'user_id' => (int) $order->user_id,
-                'email' => $request->contact_person_email,
-                "guest" => $order->is_guest
+                'user_id' => (int) $order->user_id
             ], 200);
         } catch (\Exception $e) {
             DB::rollBack();
