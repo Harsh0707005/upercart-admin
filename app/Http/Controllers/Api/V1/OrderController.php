@@ -89,6 +89,714 @@ class OrderController extends Controller
         return response()->json($order, 200);
     }
 
+    public function place_order_external(Request $request){
+        $validator = Validator::make($request->all(), [
+            'order_amount' => 'required',
+            'payment_method' => 'required|in:cash_on_delivery,digital_payment,wallet,offline_payment',
+            'order_type' => 'required|in:take_away,delivery,parcel',
+            'store_id' => 'required_unless:order_type,parcel',
+            'distance' => 'required_unless:order_type,take_away',
+            'address' => 'required_unless:order_type,take_away',
+            'longitude' => 'required_unless:order_type,take_away',
+            'latitude' => 'required_unless:order_type,take_away',
+            'parcel_category_id' => 'required_if:order_type,parcel',
+            'receiver_details' => 'required_if:order_type,parcel',
+            'charge_payer' => 'required_if:order_type,parcel|in:sender,receiver',
+            'dm_tips' => 'nullable|numeric',
+            'guest_id' => $request->user ? 'nullable' : 'required',
+            'contact_person_name' => $request->user ? 'nullable' : 'required',
+            'contact_person_number' => $request->user ? 'nullable' : 'required',
+            'contact_person_email' => $request->user ? 'nullable' : 'required',
+            'password' => $request->create_new_user ? ['required', Password::min(8)] : 'nullable',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => Helpers::error_processor($validator)], 403);
+        }
+
+        if($request->is_guest && !Helpers::get_mail_status('guest_checkout_status')){
+            return response()->json([
+                'errors' => [
+                    ['code' => 'is_guest', 'message' => translate('messages.Guest_order_is_not_active')]
+                ]
+            ], 403);
+        }
+
+        $coupon = null;
+        $coupon_created_by = null;
+        $delivery_charge = null;
+        $schedule_at = $request->schedule_at ? \Carbon\Carbon::parse($request->schedule_at) : now();
+        $store = null;
+        $free_delivery_by = null;
+        $distance_data = $request->distance;
+        $increased=0;
+        $maximum_shipping_charge = 0;
+
+        $digital_payment = Helpers::get_business_settings('digital_payment');
+        if($digital_payment['status'] == 0 && $request->payment_method == 'digital_payment'){
+            return response()->json([
+                'errors' => [
+                    ['code' => 'digital_payment', 'message' => translate('messages.digital_payment_for_the_order_not_available_at_this_time')]
+                ]
+            ], 403);
+        }
+
+        $data =  DMVehicle::active()->where(function ($query) use ($distance_data) {
+            $query->where('starting_coverage_area', '<=', $distance_data)->where('maximum_coverage_area', '>=', $distance_data)
+            ->orWhere(function ($query) use ($distance_data) {
+                $query->where('starting_coverage_area', '>=', $distance_data);
+            });
+        })
+            ->orderBy('starting_coverage_area')->first();
+
+        $extra_charges = (float) (isset($data) ? $data->extra_charges  : 0);
+        $vehicle_id = (isset($data) ? $data->id  : null);
+
+        $zone = null;
+        if ($request->latitude && $request->longitude) {
+            $point = new Point($request->latitude, $request->longitude);
+            if ($request->order_type == 'parcel') {
+            // if(isset($request->sender_zone_id) ){
+                // $zone_id = $request->sender_zone_id;
+                $zone_ids = $request->header('zoneId') ? json_decode($request->header('zoneId'), true) :[];
+                $zone = Zone::whereIn('id', $zone_ids)->whereContains('coordinates', new Point($request->latitude, $request->longitude, POINT_SRID))->wherehas('modules',function($q){
+                    $q->where('module_type','parcel');
+                })->first();
+            } else{
+                $store = Store::with(['discount', 'store_sub'])->selectRaw('*, IF(((select count(*) from `store_schedule` where `stores`.`id` = `store_schedule`.`store_id` and `store_schedule`.`day` = ' . $schedule_at->format('w') . ' and `store_schedule`.`opening_time` < "' . $schedule_at->format('H:i:s') . '" and `store_schedule`.`closing_time` >"' . $schedule_at->format('H:i:s') . '") > 0), true, false) as open')->where('id', $request->store_id)->first();
+
+                if (!$store) {
+                    return response()->json([
+                        'errors' => [
+                            ['code' => 'order_time', 'message' => translate('messages.store_not_found')]
+                        ]
+                    ], 404);
+                }
+                $zone_id = isset($store) ? [$store->zone_id] : json_decode($request->header('zoneId'), true);
+                $zone = Zone::where('id', $zone_id)->whereContains('coordinates', new Point($request->latitude, $request->longitude, POINT_SRID))->first();
+            }
+
+        }
+        if( $zone && $zone->increased_delivery_fee_status == 1){
+            $increased=$zone->increased_delivery_fee ?? 0;
+        }
+        if ($request->order_type !== 'parcel') {
+            $module_wise_delivery_charge = $store->zone->modules()->where('modules.id', $request->header('moduleId'))->first();
+            if ($module_wise_delivery_charge) {
+                $per_km_shipping_charge = $module_wise_delivery_charge->pivot->per_km_shipping_charge;
+                $minimum_shipping_charge = $module_wise_delivery_charge->pivot->minimum_shipping_charge;
+                $maximum_shipping_charge = $module_wise_delivery_charge->pivot->maximum_shipping_charge;
+            } else {
+                $per_km_shipping_charge = (float)BusinessSetting::where(['key' => 'per_km_shipping_charge'])->first()->value;
+                $minimum_shipping_charge = (float)BusinessSetting::where(['key' => 'minimum_shipping_charge'])->first()->value;
+            }
+            if ($request['order_type'] != 'take_away' && !$store->free_delivery &&  !isset($delivery_charge) &&  $store->sub_self_delivery == 1) {
+                $per_km_shipping_charge = $store->per_km_shipping_charge;
+                $minimum_shipping_charge = $store->minimum_shipping_charge;
+                $maximum_shipping_charge = $store->maximum_shipping_charge;
+                $extra_charges = 0;
+                $vehicle_id = null;
+                $increased=0;
+            }
+
+            if ($store->free_delivery || $free_delivery_by == 'vendor') {
+                $per_km_shipping_charge = $store->per_km_shipping_charge;
+                $minimum_shipping_charge = $store->minimum_shipping_charge;
+                $maximum_shipping_charge = $store->maximum_shipping_charge;
+                $extra_charges = 0;
+                $increased=0;
+            }
+
+            $original_delivery_charge = (($request->distance * $per_km_shipping_charge) > $minimum_shipping_charge) ? $request->distance * $per_km_shipping_charge  : $minimum_shipping_charge;
+
+            if ($request['order_type'] == 'take_away') {
+                $per_km_shipping_charge = 0;
+                $minimum_shipping_charge = 0;
+                $maximum_shipping_charge = 0;
+                $extra_charges = 0;
+                $distance_data = 0;
+                $vehicle_id = null;
+                $original_delivery_charge = 0;
+                $increased=0;
+            }
+
+            if ($maximum_shipping_charge  >= $minimum_shipping_charge  && $original_delivery_charge >  $maximum_shipping_charge) {
+                $original_delivery_charge = $maximum_shipping_charge;
+            } else {
+                $original_delivery_charge = $original_delivery_charge;
+            }
+
+            if (!isset($delivery_charge)) {
+                $delivery_charge = ($request->distance * $per_km_shipping_charge > $minimum_shipping_charge) ? $request->distance * $per_km_shipping_charge : $minimum_shipping_charge;
+                if ($maximum_shipping_charge  >= $minimum_shipping_charge  && $delivery_charge >  $maximum_shipping_charge) {
+                    $delivery_charge = $maximum_shipping_charge;
+                } else {
+                    $delivery_charge = $delivery_charge;
+                }
+            }
+            $original_delivery_charge = $original_delivery_charge + $extra_charges;
+            $delivery_charge = $delivery_charge + $extra_charges;
+        }else {
+            $parcel_category = ParcelCategory::findOrFail($request->parcel_category_id);
+            if (isset($parcel_category) && isset($parcel_category->parcel_minimum_shipping_charge)) {
+                $per_km_shipping_charge = $parcel_category->parcel_per_km_shipping_charge;
+                $minimum_shipping_charge = $parcel_category->parcel_minimum_shipping_charge;
+            } else {
+                $per_km_shipping_charge = (float)BusinessSetting::where(['key' => 'parcel_per_km_shipping_charge'])->first()->value;
+                $minimum_shipping_charge = (float)BusinessSetting::where(['key' => 'parcel_minimum_shipping_charge'])->first()->value;
+            }
+
+            $original_delivery_charge = (($request->distance * $per_km_shipping_charge )> $minimum_shipping_charge) ? ($request->distance * $per_km_shipping_charge )+ $extra_charges : ($minimum_shipping_charge + $extra_charges);
+        }
+
+        $address = [
+            'contact_person_name' => $request->contact_person_name ? $request->contact_person_name : ($request->user?$request->user->f_name . ' ' . $request->user->f_name:''),
+            'contact_person_number' => $request->contact_person_number ? $request->contact_person_number : ($request->user?$request->user->phone:''),
+//            'contact_person_number' => $request->contact_person_number ? ($request->user ? $request->contact_person_number :str_replace('+', '', $request->contact_person_number)) : ($request->user?$request->user->phone:''),
+            'contact_person_email' => $request->contact_person_email ? $request->contact_person_email : ($request->user?$request->user->email:''),
+            'address_type' => $request->address_type ? $request->address_type : 'Delivery',
+            'address' => $request?->address??'',
+            'floor' => $request?->floor??'',
+            'road' => $request?->road??'',
+            'house' => $request?->house??'',
+            'longitude' => (string)$request->longitude,
+            'latitude' => (string)$request->latitude,
+        ];
+
+        $total_addon_price = 0;
+        $product_price = 0;
+        $store_discount_amount = 0;
+        $flash_sale_vendor_discount_amount = 0;
+        $flash_sale_admin_discount_amount = 0;
+        $store_discount_amount = 0;
+        $product_data = [];
+
+        $order_details = [];
+        $order = new Order();
+        $order->id = 100000 + Order::count() + 1;
+        if (Order::find($order->id)) {
+            $order->id = Order::orderBy('id', 'desc')->first()->id + 1;
+        }
+        $order_status ='pending';
+        $order->user_id = $request->user ? $request->user->id : $request['guest_id'];
+        $order->order_amount = $request['order_amount'];
+        $order->additional_charge = $request['additional_charge'];
+        $order->payment_status = ($request->partial_payment ? 'partially_paid' : ($request['payment_method'] == 'wallet' ? 'paid' : 'unpaid'));
+        $order->order_status = $order_status;
+        $order->coupon_code = $request['coupon_code'];
+        $order->payment_method = $request->partial_payment? 'partial_payment' :$request->payment_method;
+        $order->transaction_reference = null;
+        $order->order_note = $request['order_note'];
+        $order->unavailable_item_note = $request['unavailable_item_note'];
+        $order->delivery_instruction = $request['delivery_instruction'];
+        $order->order_type = $request['order_type'];
+        $order->store_id = $request['store_id'];
+        $order->delivery_charge = round($delivery_charge, config('round_up_to_digit')) ?? 0;
+        $order->original_delivery_charge = round($original_delivery_charge, config('round_up_to_digit'));
+        $order->delivery_address = json_encode($address);
+        $order->schedule_at = $schedule_at;
+        $order->scheduled = $request->schedule_at ? 1 : 0;
+        $order->cutlery = $request->cutlery ? 1 : 0;
+        $order->is_guest = $request->user ? 0 : 1;
+        $order->otp = rand(1000, 9999);
+        $order->zone_id = isset($zone) ? $zone->id : end(json_decode($request->header('zoneId'), true));
+        $order->module_id = $request->header('moduleId');
+        $order->parcel_category_id = $request->parcel_category_id;
+        $order->receiver_details = json_decode($request->receiver_details);
+        if ($order_status == 'confirmed') {
+            $order->confirmed = now();
+        }
+        $order->dm_vehicle_id = $vehicle_id;
+        $order->pending = now();
+        if (!empty($request->file('order_attachment')) && is_array($request->file('order_attachment'))) {
+            $img_names = [];
+            if (!empty($request->file('order_attachment'))) {
+                $images = [];
+                foreach ($request->order_attachment as $img) {
+                    $image_name = Helpers::upload('order/', 'png', $img);
+                    array_push($img_names, ['img'=>$image_name, 'storage'=> Helpers::getDisk()]);
+                }
+                $images = $img_names;
+            }
+        }else{
+            $img_names = [];
+            if (!empty($request->file('order_attachment'))) {
+                $images = [];
+                $image_name = Helpers::upload('order/', 'png', $request->file('order_attachment'));
+                array_push($img_names, ['img'=>$image_name, 'storage'=> Helpers::getDisk()]);
+
+                $images = $img_names;
+            }
+        }
+        if(isset($images)){
+            $order->order_attachment = json_encode($images);
+        }
+        $order->distance = $request->distance;
+        $order->created_at = now();
+        $order->updated_at = now();
+        $order->charge_payer = $request->charge_payer;
+
+        //Added DM TIPS
+        $dm_tips_manage_status = BusinessSetting::where('key', 'dm_tips_status')->first()->value;
+        if ($dm_tips_manage_status == 1) {
+            $order->dm_tips = $request->dm_tips ?? 0;
+        } else {
+            $order->dm_tips = 0;
+        }
+
+        
+        // $additional_charge_status = BusinessSetting::where('key', 'additional_charge_status')->first()->value;
+        // $additional_charge = BusinessSetting::where('key', 'additional_charge')->first()->value;
+
+        // $order->additional_charge = (float)ceil($additional_charge * $order->order_amount / 100) ?? 0;
+        // if ($additional_charge_status == 1) {
+        //     $order->additional_charge = $additional_charge ?? 0;
+        // } else {
+        //     $order->additional_charge = 0;
+        // }
+        $extra_packaging_data = BusinessSetting::where('key', 'extra_packaging_data')->first()?->value ?? '';
+        $extra_packaging_data =json_decode($extra_packaging_data , true);
+        $order->extra_packaging_amount =  (!empty($extra_packaging_data) && $request?->extra_packaging_amount > 0 && $store && ($extra_packaging_data[$store->module->module_type]=='1') && ($store?->storeConfig?->extra_packaging_status == '1'))?$store?->storeConfig?->extra_packaging_amount:0;
+
+        $carts = Cart::where('user_id', $order->user_id)->where('is_guest',$order->is_guest)->where('module_id',$request->header('moduleId'))
+        ->when(isset($request->is_buy_now) && $request->is_buy_now == 1 && $request->cart_id, function ($query) use ($request) {
+            return $query->where('id',$request->cart_id);
+        })
+        ->get()->map(function ($data) {
+            $data->add_on_ids = json_decode($data->add_on_ids,true);
+            $data->add_on_qtys = json_decode($data->add_on_qtys,true);
+            $data->variation = json_decode($data->variation,true);
+			return $data;
+		});
+        if(isset($request->is_buy_now) && $request->is_buy_now == 1){
+            $carts = json_decode($request['cart'], true);
+        }
+        if ($request->order_type !== 'parcel') {
+            foreach ($carts as $c) {
+                if ($c['item_type'] === 'App\Models\ItemCampaign' || $c['item_type'] === 'AppModelsItemCampaign') {
+                    $product = ItemCampaign::with('module')->active()->find($c['item_id']);
+                    if ($product) {
+
+
+                        if($product->store_id != $order->store_id){
+                            return response()->json([
+                                'errors' => [
+                                    ['code' => 'different_stores', 'message' => translate('messages.Please_select_items_from_the_same_store')]
+                                ]
+                            ], 403);
+                        }
+
+                        if ($product->module->module_type == 'food' && $product->food_variations) {
+                            $product_variations = json_decode($product->food_variations, true);
+                            $variations = [];
+                            if (count($product_variations)) {
+                                $variation_data = Helpers::get_varient($product_variations, $c['variation']);
+                                $price = $product['price'] + $variation_data['price'];
+                                $variations = $variation_data['variations'];
+                            } else {
+                                $price = $product['price'];
+                            }
+                            $product->tax = $store->tax;
+                            $product = Helpers::product_data_formatting($product, false, false, app()->getLocale());
+                            $addon_data = Helpers::calculate_addon_price(\App\Models\AddOn::whereIn('id', $c['add_on_ids'])->get(), $c['add_on_qtys']);
+
+                            $or_d = [
+                                'item_id' => null,
+                                'item_campaign_id' => $c['item_id'],
+                                'item_details' => json_encode($product),
+                                'quantity' => $c['quantity'],
+                                'price' => round($price, config('round_up_to_digit')),
+                                'tax_amount' => Helpers::tax_calculate($product, $price),
+                                'discount_on_item' => Helpers::product_discount_calculate($product, $price, $store)['discount_amount'],
+                                'discount_type' => 'discount_on_product',
+                                'variant' => json_encode($c['variant']),
+                                'variation' => json_encode($variations),
+                                'add_ons' => json_encode($addon_data['addons']),
+                                'total_add_on_price' => $addon_data['total_add_on_price'],
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ];
+                            $order_details[] = $or_d;
+                            $total_addon_price += $or_d['total_add_on_price'];
+                            $product_price += $price * $or_d['quantity'];
+                            $store_discount_amount += $or_d['discount_on_item'] * $or_d['quantity'];
+                        } else {
+                            if (count(json_decode($product['variations'], true)) > 0) {
+                                $variant_data = Helpers::variation_price($product, json_encode($c['variation']));
+                                $price = $variant_data['price'];
+                                $stock = $variant_data['stock'];
+                            } else {
+                                $price = $product['price'];
+                                $stock = $product->stock;
+                            }
+                            if (config('module.' . $product->module->module_type)['stock']) {
+                                if ($c['quantity'] > $stock) {
+                                    return response()->json([
+                                        'errors' => [
+                                            ['code' => 'campaign', 'message' => translate('messages.product_out_of_stock_warning', ['item' => $product->title])]
+                                        ]
+                                    ], 406);
+                                }
+
+                                $product_data[] = [
+                                    'item' => clone $product,
+                                    'quantity' => $c['quantity'],
+                                    'variant' => count($c['variation']) > 0 ? $c['variation'][0]['type'] : null
+                                ];
+                            }
+
+                            $product->tax = $store->tax;
+                            $product = Helpers::product_data_formatting($product, false, false, app()->getLocale());
+                            $addon_data = Helpers::calculate_addon_price(\App\Models\AddOn::whereIn('id', $c['add_on_ids'])->get(), $c['add_on_qtys']);
+                            $or_d = [
+                                'item_id' => null,
+                                'item_campaign_id' => $c['item_id'],
+                                'item_details' => json_encode($product),
+                                'quantity' => $c['quantity'],
+                                'price' => $price,
+                                'tax_amount' => Helpers::tax_calculate($product, $price),
+                                'discount_on_item' => Helpers::product_discount_calculate($product, $price, $store)['discount_amount'],
+                                'discount_type' => 'discount_on_product',
+                                'variant' => json_encode($c['variant']),
+                                'variation' => json_encode($c['variation']),
+                                'add_ons' => json_encode($addon_data['addons']),
+                                'total_add_on_price' => $addon_data['total_add_on_price'],
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ];
+                            $order_details[] = $or_d;
+                            $total_addon_price += $or_d['total_add_on_price'];
+                            $product_price += $price * $or_d['quantity'];
+                            $store_discount_amount += $or_d['discount_on_item'] * $or_d['quantity'];
+                        }
+                    } else {
+                        return response()->json([
+                            'errors' => [
+                                ['code' => 'campaign', 'message' => translate('messages.product_unavailable_warning')]
+                            ]
+                        ], 404);
+                    }
+                } else {
+                    $product = Item::with('module')->active()->find($c['item_id']);
+                    if ($product) {
+
+                        if($product->store_id != $order->store_id){
+                            return response()->json([
+                                'errors' => [
+                                    ['code' => 'different_stores', 'message' => translate('messages.Please_select_items_from_the_same_store')]
+                                ]
+                            ], 403);
+                        }
+
+                        if(($product->pharmacy_item_details?->is_prescription_required == '1') && empty($request->file('order_attachment'))){
+                            return response()->json([
+                                'errors' => [
+                                    ['code' => 'prescription', 'message' => translate('messages.prescription_is_required_for_this_order')]
+                                ]
+                            ], 403);
+                        }
+
+
+                        if($product->maximum_cart_quantity && ($c['quantity'] > $product->maximum_cart_quantity)){
+                            return response()->json([
+                                'errors' => [
+                                    ['code' => 'quantity', 'message' => translate('messages.maximum_cart_quantity_limit_over')]
+                                ]
+                            ], 406);
+                        }
+                        if ($product->module->module_type == 'food' && $product->food_variations) {
+                            // if (count(json_decode($product['variations'], true)) > 0) {
+                            //     $price = Helpers::variation_price($product, json_encode($c['variation']));
+                            // } else {
+                            $product_variations = json_decode($product->food_variations, true);
+                            $variations = [];
+                            if (count($product_variations)) {
+                                $variation_data = Helpers::get_varient($product_variations, $c['variation']);
+                                // $price = Helpers::variation_price($product, json_encode($c['variation']));
+                                $price = $product['price'] + $variation_data['price'];
+                                $variations =  $variation_data['variations'];
+                            } else {
+                                $price = $product['price'];
+                            }
+                            $product->tax = $store->tax;
+                            $product = Helpers::product_data_formatting($product, false, false, app()->getLocale());
+                            $addon_data = Helpers::calculate_addon_price(\App\Models\AddOn::whereIn('id', $c['add_on_ids'])->get(), $c['add_on_qtys']);
+                            $product_discount = Helpers::product_discount_calculate($product, $price, $store);
+                            $or_d = [
+                                'item_id' => $c['item_id'],
+                                'item_campaign_id' => null,
+                                'item_details' => json_encode($product),
+                                'quantity' => $c['quantity'],
+                                'price' => round($price, config('round_up_to_digit')),
+                                'tax_amount' => round(Helpers::tax_calculate($product, $price), config('round_up_to_digit')),
+                                'discount_on_item' => $product_discount['discount_amount'],
+                                'discount_type' => $product_discount['discount_type'],
+                                'variant' => json_encode($c['variant']),
+                                'variation' => json_encode($variations),
+
+                                // 'variation' => json_encode($c['variation']),
+                                'add_ons' => json_encode($addon_data['addons']),
+                                'total_add_on_price' => round($addon_data['total_add_on_price'], config('round_up_to_digit')),
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ];
+                            $total_addon_price += $or_d['total_add_on_price'];
+                            $product_price += $price * $or_d['quantity'];
+                            $store_discount_amount += $or_d['discount_type']!='flash_sale'?$or_d['discount_on_item'] * $or_d['quantity']:0;
+                            $flash_sale_admin_discount_amount += $or_d['discount_type']=='flash_sale'?$product_discount['admin_discount_amount'] * $or_d['quantity']:0;
+                            $flash_sale_vendor_discount_amount += $or_d['discount_type']=='flash_sale'?$product_discount['vendor_discount_amount'] * $or_d['quantity']:0;
+                            $order_details[] = $or_d;
+                        } else {
+
+                            if (count(json_decode($product['variations'], true)) > 0 && count($c['variation'])>0) {
+                                $variant_data = Helpers::variation_price($product, json_encode($c['variation']));
+                                $price = $variant_data['price'];
+                                $stock = $variant_data['stock'];
+                            } else {
+                                $price = $product['price'];
+                                $stock = $product->stock;
+                            }
+
+                            if (config('module.' . $product->module->module_type)['stock']) {
+                                if ($c['quantity'] > $stock) {
+                                    return response()->json([
+                                        'errors' => [
+                                            ['code' => 'campaign', 'message' => translate('messages.product_out_of_stock_warning', ['item' => $product->name])]
+                                        ]
+                                    ], 406);
+                                }
+
+                                $product_data[] = [
+                                    'item' => clone $product,
+                                    'quantity' => $c['quantity'],
+                                    'variant' => count($c['variation']) > 0 ? $c['variation'][0]['type'] : null
+                                ];
+                            }
+
+                            $product->tax = $store->tax;
+                            $product = Helpers::product_data_formatting($product, false, false, app()->getLocale());
+                            $addon_data = Helpers::calculate_addon_price(\App\Models\AddOn::whereIn('id', $c['add_on_ids'])->get(), $c['add_on_qtys']);
+                            $product_discount = Helpers::product_discount_calculate($product, $price, $store);
+                            $or_d = [
+                                'item_id' => $c['item_id'],
+                                'item_campaign_id' => null,
+                                'item_details' => json_encode($product),
+                                'quantity' => $c['quantity'],
+                                'price' => round($price, config('round_up_to_digit')),
+                                'tax_amount' => round(Helpers::tax_calculate($product, $price), config('round_up_to_digit')),
+                                'discount_on_item' => $product_discount['discount_amount'],
+                                'discount_type' => $product_discount['discount_type'],
+                                'variant' => json_encode($c['variant']),
+                                'variation' => json_encode($c['variation']),
+                                'add_ons' => json_encode($addon_data['addons']),
+                                'total_add_on_price' => round($addon_data['total_add_on_price'], config('round_up_to_digit')),
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ];
+                            $total_addon_price += $or_d['total_add_on_price'];
+                            $product_price += $price * $or_d['quantity'];
+                            $store_discount_amount += $or_d['discount_type']!='flash_sale'?$or_d['discount_on_item'] * $or_d['quantity']:0;
+                            $flash_sale_admin_discount_amount += $or_d['discount_type']=='flash_sale'?$product_discount['admin_discount_amount'] * $or_d['quantity']:0;
+                            $flash_sale_vendor_discount_amount += $or_d['discount_type']=='flash_sale'?$product_discount['vendor_discount_amount'] * $or_d['quantity']:0;
+                            $order_details[] = $or_d;
+                        }
+                    } else {
+                        return response()->json([
+                            'errors' => [
+                                ['code' => 'item', 'message' => translate('messages.product_unavailable_warning')]
+                            ]
+                        ], 404);
+                    }
+                }
+            }
+            $order->discount_on_product_by = 'vendor';
+            $store_discount = Helpers::get_store_discount($store);
+            if (isset($store_discount)) {
+                $order->discount_on_product_by = 'admin';
+                if ($product_price + $total_addon_price < $store_discount['min_purchase']) {
+                    $store_discount_amount = 0;
+                }
+
+                if ($store_discount['max_discount'] != 0 && $store_discount_amount > $store_discount['max_discount']) {
+                    $store_discount_amount = $store_discount['max_discount'];
+                }
+            }
+            $coupon_discount_amount = $coupon ? CouponLogic::get_discount($coupon, $product_price + $total_addon_price - $store_discount_amount - $flash_sale_admin_discount_amount - $flash_sale_vendor_discount_amount) : 0;
+
+
+
+
+            $total_price = $product_price + $total_addon_price - $store_discount_amount - $flash_sale_admin_discount_amount - $flash_sale_vendor_discount_amount  - $coupon_discount_amount;
+
+
+
+            if($order->is_guest  == 0 && $order->user_id ){
+                $user= User::withcount('orders')->find($order->user_id);
+                $discount_data= Helpers::getCusromerFirstOrderDiscount(order_count:$user->orders_count ,user_creation_date:$user->created_at,  refby:$user->ref_by, price: $total_price);
+                    if(data_get($discount_data,'is_valid') == true &&  data_get($discount_data,'calculated_amount') > 0){
+                        $total_price = $total_price - data_get($discount_data,'calculated_amount');
+                        $order->ref_bonus_amount = data_get($discount_data,'calculated_amount');
+                    }
+            }
+
+
+
+
+            $tax = ($store->tax > 0) ? $store->tax : 0;
+            $order->tax_status = 'excluded';
+
+            $tax_included = BusinessSetting::where(['key' => 'tax_included'])->first() ?  BusinessSetting::where(['key' => 'tax_included'])->first()->value : 0;
+            if ($tax_included ==  1) {
+                $order->tax_status = 'included';
+            }
+
+            $total_tax_amount = Helpers::product_tax($total_price, $tax, $order->tax_status == 'included');
+
+            $tax_a = $order->tax_status == 'included' ? 0 : $total_tax_amount;
+
+            if ($store->minimum_order > $product_price + $total_addon_price) {
+                return response()->json([
+                    'errors' => [
+                        ['code' => 'order_time', 'message' => translate('messages.you_need_to_order_at_least'). $store->minimum_order . ' ' . Helpers::currency_code()]
+                    ]
+                ], 406);
+            }
+
+            $free_delivery_over = BusinessSetting::where('key', 'free_delivery_over')->first()->value;
+            if (isset($free_delivery_over)) {
+                if ($free_delivery_over <= $product_price + $total_addon_price - $coupon_discount_amount - $store_discount_amount - $flash_sale_admin_discount_amount - $flash_sale_vendor_discount_amount) {
+                    $order->delivery_charge = 0;
+                    $free_delivery_by = 'admin';
+                }
+            }
+
+            if ($store->free_delivery) {
+                $order->delivery_charge = 0;
+                $free_delivery_by = 'vendor';
+            }
+
+            if ($coupon) {
+                if ($coupon->coupon_type == 'free_delivery') {
+                    if ($coupon->min_purchase <= $product_price + $total_addon_price - $store_discount_amount - $flash_sale_admin_discount_amount - $flash_sale_vendor_discount_amount) {
+                        $order->delivery_charge = 0;
+                        $free_delivery_by = $coupon->created_by;
+                    }
+                }
+                $coupon->increment('total_uses');
+            }
+            $order->coupon_created_by = $coupon_created_by;
+            $order->coupon_discount_amount = round($coupon_discount_amount, config('round_up_to_digit'));
+            $order->coupon_discount_title = $coupon ? $coupon->title : '';
+
+            $order->store_discount_amount = round($store_discount_amount, config('round_up_to_digit'));
+            $order->tax_percentage = $tax;
+            $order->total_tax_amount = round($total_tax_amount, config('round_up_to_digit'));
+            $order->order_amount = round($total_price + $tax_a + $order->delivery_charge, config('round_up_to_digit'));
+            $order->free_delivery_by = $free_delivery_by;
+        } else {
+            $point = new Point(json_decode($request->receiver_details, true)['latitude'], json_decode($request->receiver_details, true)['longitude']);
+            $zone_id =  json_decode($request->receiver_details, true)['zone_id'];
+            $zone = Zone::where('id', $zone_id)->whereContains('coordinates', new Point(json_decode($request->receiver_details, true)['latitude'], json_decode($request->receiver_details, true)['longitude'], POINT_SRID))->first();
+            if (!$zone) {
+                $errors = [];
+                array_push($errors, ['code' => 'receiver_details', 'message' => translate('messages.out_of_coverage')]);
+                return response()->json([
+                    'errors' => $errors
+                ], 403);
+            }
+            $order->delivery_charge = round($original_delivery_charge, config('round_up_to_digit')) ?? 0;
+            $order->original_delivery_charge = round($original_delivery_charge, config('round_up_to_digit'));
+            $order->order_amount = round($order->delivery_charge, config('round_up_to_digit'));
+        }
+        $order->flash_admin_discount_amount = round($flash_sale_admin_discount_amount, config('round_up_to_digit'));
+        $order->flash_store_discount_amount = round($flash_sale_vendor_discount_amount, config('round_up_to_digit'));
+        $order->order_amount = $order->order_amount + $order->dm_tips + $order->additional_charge + $order->extra_packaging_amount;
+
+        try {
+            DB::beginTransaction();
+            $order->payment_status='paid';
+            $order->payment_method='external';
+            $order->order_status='confirmed';
+            $order->save();
+            if ($request->order_type !== 'parcel') {
+                foreach ($order_details as $key => $item) {
+                    $order_details[$key]['order_id'] = $order->id;
+
+                    if($store_discount_amount <= 0 ){
+                        $order_details[$key]['discount_on_item'] = 0;
+                    }
+                }
+                OrderDetail::insert($order_details);
+                if (count($product_data) > 0) {
+                    foreach ($product_data as $item) {
+                        ProductLogic::update_stock($item['item'], $item['quantity'], $item['variant'])->save();
+                        ProductLogic::update_flash_stock($item['item'], $item['quantity'])?->save();
+                    }
+                }
+                $store->increment('total_order');
+            }
+            if(!isset($request->is_buy_now) || (isset($request->is_buy_now) && $request->is_buy_now == 0 )){
+                foreach ($carts as $cart) {
+                    $cart->delete();
+                }
+            }
+            if($order->is_guest  == 0 && $order->user_id ){
+                $this->createCashBackHistory($order->order_amount, $order->user_id,$order->id);
+            }
+
+            DB::commit();
+            $payments = $order->payments()->where('payment_method','cash_on_delivery')->exists();
+            $order_mail_status = Helpers::get_mail_status('place_order_mail_status_user');
+            $order_verification_mail_status = Helpers::get_mail_status('order_verification_mail_status_user');
+            //PlaceOrderMail
+            try {
+
+                if(!in_array($order->payment_method, ['digital_payment', 'partial_payment', 'offline_payment'])  || $payments){
+                        Helpers::send_order_notification($order);
+
+                        if( $store?->is_valid_subscription == 1 && $store?->store_sub?->max_order != "unlimited" && $store?->store_sub?->max_order > 0){
+                            $store?->store_sub?->decrement('max_order' , 1);
+                        }
+
+
+                    if ($order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
+                        Mail::to($request->user->email)->send(new PlaceOrder($order->id));
+                        Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
+                    }
+                    if ($order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && $request->user && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status')) {
+                        Mail::to($request->user->email)->send(new OrderVerificationMail($order->otp,$request->user->f_name));
+                    }
+                    if ($order->is_guest == 1 && $order->order_status == 'pending' && config('mail.status') && $order_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_order_notification','mail_status')) {
+                        Mail::to($request->contact_person_email)->send(new PlaceOrder($order->id));
+                        Mail::to("hello@upercart.com")->send(new PlaceOrder($order->id));
+                    }
+                    if ($order->is_guest == 1 && $order->order_status == 'pending' && config('order_delivery_verification') == 1 && $order_verification_mail_status == '1' && isset($request->contact_person_email) && Helpers::getNotificationStatusData('customer','customer_delivery_verification','mail_status') ) {
+                        Mail::to($request->contact_person_email)->send(new OrderVerificationMail($order->otp,$request->contact_person_name));
+                    }
+                }
+            } catch (\Exception $ex) {
+                info($ex->getMessage());
+            }
+            return response()->json([
+                'message' => translate('messages.order_placed_successfully'),
+                'order_id' => $order->id,
+                'total_ammount' => $order->order_amount,
+                'status' => $order->order_status,
+                'created_at' => $order->created_at,
+                'user_id' => (int) $order->user_id,
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([$e], 403);
+        }
+
+        return response()->json([
+            'errors' => [
+                ['code' => 'order_time', 'message' => translate('messages.failed_to_place_order')]
+            ]
+        ], 403);
+    }
+
     public function place_custom_stripe(Request $request){
         $validator = Validator::make($request->all(), [
             'order_amount' => 'required',
