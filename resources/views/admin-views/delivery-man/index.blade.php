@@ -167,10 +167,10 @@
                                         </label>
                                         <select required name="identity_type" data-placeholder="{{ translate('messages.select_identity_type') }}" class="form-control js-select2-custom">
                                             <option  value="" readonly="true" hidden="true"  > {{ translate('messages.select_identity_type') }}</option>
-                                            <option value="passport">{{ translate('messages.passport') }}</option>
+                                            <!-- <option value="passport">{{ translate('messages.passport') }}</option> -->
                                             <option value="driving_license">{{ translate('messages.driving_license') }} </option>
-                                            <option value="nid">{{ translate('messages.nid') }}</option>
-                                            <option value="store_id">{{ translate('messages.store_id') }}</option>
+                                            <!-- <option value="nid">{{ translate('messages.nid') }}</option> -->
+                                            <!-- <option value="store_id">{{ translate('messages.store_id') }}</option> -->
                                         </select>
                                     </div>
                                 </div>

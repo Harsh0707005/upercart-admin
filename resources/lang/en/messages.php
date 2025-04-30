@@ -506,7 +506,7 @@
   'deliveryman_image' => 'Deliveryman image',
   'identity_type' => 'Identity type',
   'passport' => 'Passport',
-  'driving_license' => 'Driving license',
+  'driving_license' => 'Driver\'s license',
   'nid' => 'Nid',
   'store_id' => 'Store id',
   'identity_number' => 'Identity number',
