@@ -6384,7 +6384,7 @@ strong {
 .auth-wrapper-left {
     width: 0;
     flex-grow: 1;
-    background: url(./images/auth-bg.png) no-repeat center left/cover;
+    background: url(./images/auth-bg.png) no-repeat center left/100% 100%;
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
