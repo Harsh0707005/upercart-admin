@@ -370,6 +370,23 @@
                 <!-- End Card -->
             </div>
 
+            <!-- Looker Studio Dashboard -->
+            <div class="col-12">
+                <div class="card" style="height: 800px;">
+                    <div class="card-header">
+                        <h5 class="card-header-title">{{translate('Analytics Dashboard')}}</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <iframe src="https://lookerstudio.google.com/embed/reporting/7212700e-7ec3-4d7b-be9e-e540c61138cf/page/KCQLF" 
+                                frameborder="0" 
+                                style="border:0; width: 100%; height: 100%; min-height: 750px;" 
+                                allowfullscreen>
+                        </iframe>
+                    </div>
+                </div>
+            </div>
+            <!-- End Looker Studio Dashboard -->
+
         </div>
         @else
         <!-- Page Header -->
