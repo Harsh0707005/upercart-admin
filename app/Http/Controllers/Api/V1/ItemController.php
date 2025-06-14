@@ -172,21 +172,10 @@ class ItemController extends Controller
         })
         ->where(function ($q) use ($key) {
             foreach ($key as $value) {
-                $q->orWhere('name', 'like', "%{$value}%");
+                $q->orWhere('name', 'like', "%{$value}%")
+                ->orWhere('description', 'like', "%{$value}%");
             }
     
-            $relationships = [
-                'translations' => 'value',
-                'tags' => 'tag',
-                'nutritions' => 'nutrition',
-                'allergies' => 'allergy',
-                'category.parent' => 'name',
-                'category' => 'name',
-                'generic' => 'generic_name',
-                'ecommerce_item_details.brand' => 'name',
-                'pharmacy_item_details.common_condition' => 'name',
-            ];
-            $q->applyRelationShipSearch(relationships: $relationships, searchParameter: $key);
         })
         ->when($rating_count, function ($query) use ($rating_count) {
             $query->where('avg_rating', '>=', $rating_count);
